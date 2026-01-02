@@ -2,7 +2,7 @@ from langchain_core.messages import BaseMessage, AIMessage, SystemMessage, Human
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import SystemMessagePromptTemplate, ChatPromptTemplate
 from langchain_openai import AzureChatOpenAI
-from pydantic import SecretStr
+from pydantic import SecretStr, BaseModel, Field
 
 from tasks._constants import DIAL_URL, API_KEY
 
@@ -30,11 +30,38 @@ FILTER_SYSTEM_PROMPT = """NEED TO WRITE IT"""
 
 #TODO 1:
 # Create AzureChatOpenAI client, model to use `gpt-4.1-nano-2025-04-14` (or any other mini or nano models)
+client = AzureChatOpenAI(
+    temperature=0.0,
+    seed=1234,
+    azure_deployment='gpt-4.1-nano-2025-04-14',
+    azure_endpoint=DIAL_URL,
+    api_key=SecretStr(API_KEY),
+    api_version=""
+)
+
+class Validation(BaseModel):
+    valid: bool = Field(
+        description="Provides indicator if PII (Personally Identifiable Information ) was leaked.",
+    )
+
+    description: str | None = Field(
+        default=None,
+        description="If any PII was leaked provides names of types of PII that were leaked. Up to 50 tokens.",
+    )
 
 def validate(llm_output: str) :
     #TODO 2:
     # Make validation of LLM output to check leaks of PII
-    raise NotImplementedError
+    parser = PydanticOutputParser(pydantic_object=Validation)
+    messages = [
+        SystemMessagePromptTemplate.from_template(template=VALIDATION_PROMPT),
+        HumanMessage(content=llm_output)
+    ]
+    prompt = ChatPromptTemplate.from_messages(messages=messages).partial(
+        format_instructions=parser.get_format_instructions()
+    )
+
+    return (prompt | client | parser).invoke({"user_input": llm_output})
 
 def main(soft_response: bool):
     #TODO 3:
@@ -42,7 +69,38 @@ def main(soft_response: bool):
     # User input -> generation -> validation -> valid -> response to user
     #                                        -> invalid -> soft_response -> filter response with LLM -> response to user
     #                                                     !soft_response -> reject with description
-    raise NotImplementedError
+    messages: list[BaseMessage] = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=PROFILE)
+    ]
+
+    print("Type your question or 'exit' to quit.")
+    while True:
+        print("="*100)
+        user_input = input("> ").strip()
+        if user_input.lower() == "exit":
+            print("Exiting the chat. Goodbye!")
+            break
+
+        messages.append(HumanMessage(content=user_input))
+        ai_message = client.invoke(messages)
+        validation = validate(ai_message.content)
+
+        if validation.valid:
+            messages.append(ai_message)
+            print(f"🤖Response:\n{ai_message.content}")
+        elif soft_response:
+            filtered_ai_message = client.invoke(
+                [
+                    SystemMessage(content=FILTER_SYSTEM_PROMPT),
+                    HumanMessage(content=ai_message.content)
+                ]
+            )
+            messages.append(filtered_ai_message)
+            print(f"⚠️Validated response:\n{filtered_ai_message.content}")
+        else:
+            messages.append(AIMessage(content="Blocked! Attempt to access PII!"))
+            print(f"🚫Response contains PII: {validation.description}")
 
 
 main(soft_response=False)

@@ -32,7 +32,35 @@ def main():
     # 3. Create console chat with LLM, preserve history (user and assistant messages should be added to messages array
     #   and each new request you must provide whole conversation history. With preserved history we can make multistep
     #   (more complicated strategy) of prompt injection).
-    raise NotImplementedError
+    client = AzureChatOpenAI(
+        temperature=0.0,
+        seed=1234,
+        azure_deployment='gpt-4.1-nano-2025-04-14',
+        azure_endpoint=DIAL_URL,
+        api_key=SecretStr(API_KEY),
+        api_version=""
+    )
+
+    messages: list[BaseMessage] = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=PROFILE)
+    ]
+
+    print("Type your question or 'exit' to quit.")
+    while True:
+        user_input = input("> ").strip()
+        if user_input.lower() == "exit":
+            print("Exiting the chat. Goodbye!")
+            break
+
+        messages.append(
+            HumanMessage(content=user_input)
+        )
+
+        ai_message = client.invoke(messages)
+        messages.append(ai_message)
+
+        print(f"🤖Response:\n{ai_message.content}\n{'='*100}")
 
 
 main()

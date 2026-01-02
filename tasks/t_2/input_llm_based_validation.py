@@ -29,6 +29,24 @@ VALIDATION_PROMPT = """NEED TO WRITE IT"""
 
 #TODO 1:
 # Create AzureChatOpenAI client, model to use `gpt-4.1-nano-2025-04-14` (or any other mini or nano models)
+client = AzureChatOpenAI(
+    temperature=0.0,
+    seed=1234,
+    azure_deployment='gpt-4.1-nano-2025-04-14',
+    azure_endpoint=DIAL_URL,
+    api_key=SecretStr(API_KEY),
+    api_version=""
+)
+
+class Validation(BaseModel):
+    valid: bool = Field(
+        description="Provides indicator if any Prompt Injections are found.",
+    )
+
+    description: str | None = Field(
+        default=None,
+        description="If any Prompt Injections are found provides description of the Prompt Injection. Up to 50 tokens.",
+    )
 
 def validate(user_input: str):
     #TODO 2:
@@ -38,7 +56,16 @@ def validate(user_input: str):
     # ---
     # Hint 1: You need to write properly VALIDATION_PROMPT
     # Hint 2: Create pydentic model for validation
-    raise NotImplementedError
+    parser: PydanticOutputParser = PydanticOutputParser(pydantic_object=Validation)
+    messages = [
+        SystemMessagePromptTemplate.from_template(template=VALIDATION_PROMPT),
+        HumanMessage(content=user_input)
+    ]
+    prompt = ChatPromptTemplate.from_messages(messages=messages).partial(
+        format_instructions=parser.get_format_instructions()
+    )
+
+    return (prompt | client | parser).invoke({})
 
 def main():
     #TODO 1:
@@ -47,7 +74,27 @@ def main():
     # 2. Create console chat with LLM, preserve history there. In chat there are should be preserved such flow:
     #    -> user input -> validation of user input -> valid -> generation -> response to user
     #                                              -> invalid -> reject with reason
-    raise NotImplementedError
+    messages: list[BaseMessage] = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=PROFILE)
+    ]
+
+    print("Type your question or 'exit' to quit.")
+    while True:
+        print("="*100)
+        user_input = input("> ").strip()
+        if user_input.lower() == "exit":
+            print("Exiting the chat. Goodbye!")
+            break
+
+        validation: Validation = validate(user_input)
+        if validation.valid:
+            messages.append(HumanMessage(content=user_input))
+            ai_message = client.invoke(messages)
+            messages.append(ai_message)
+            print(f"🤖Response:\n{ai_message.content}")
+        else:
+            print(f"🚫Blocked: {validation.description}")
 
 
 main()
